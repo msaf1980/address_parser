@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -360,8 +359,8 @@ func (p *AddressParser) readAddressFile(filePath string) error {
 	}
 	defer f.Close()
 
-	bufRd := bufio.NewReader(f)
-	//bufRd := NewBufferedReader(f, 4096)
+	//bufRd := bufio.NewReader(f)
+	bufRd := NewSizedBufReader(f, 4096)
 
 	return p.read(bufRd)
 }

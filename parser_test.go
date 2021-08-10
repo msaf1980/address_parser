@@ -112,8 +112,8 @@ func TestAddressParser(t *testing.T) {
 	}
 }
 
-func BenchmarkAddressParserSmall(b *testing.B) {
-	xml := strings.NewReader(
+func BenchmarkAddressParserSmall4096(b *testing.B) {
+	xmlReader := strings.NewReader(
 		`<?xml version="1.0" encoding="utf-8"?>
 <root>
 <item city="Барнаул" street="Дальняя улица" house="56" floor="2" />
@@ -179,21 +179,35 @@ func BenchmarkAddressParserSmall(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		var p AddressParser
 		p.Init()
-		err := p.read(bufio.NewReader(xml))
+		err := p.read(NewSizedBufReader(xmlReader, 4096))
 		require.NoErrorf(b, err, "xml read error")
 	}
 }
 
-func BenchmarkAddressParserLarge(b *testing.B) {
+func BenchmarkAddressParserLarge4096(b *testing.B) {
 	_, filename, _, _ := runtime.Caller(0)
 	path := path.Join(path.Dir(filename), "bench", "large.xml")
-	xml, err := ioutil.ReadFile(path)
+	xmlBytes, err := ioutil.ReadFile(path)
 	require.NoErrorf(b, err, "xml file load error")
 
 	for n := 0; n < b.N; n++ {
 		var p AddressParser
 		p.Init()
-		err := p.read(bufio.NewReader(bytes.NewReader(xml)))
+		err := p.read(NewSizedBufReader(bytes.NewReader(xmlBytes), 4096))
+		require.NoErrorf(b, err, "xml read error")
+	}
+}
+
+func BenchmarkAddressParserLarge4096000(b *testing.B) {
+	_, filename, _, _ := runtime.Caller(0)
+	path := path.Join(path.Dir(filename), "bench", "large.xml")
+	xmlBytes, err := ioutil.ReadFile(path)
+	require.NoErrorf(b, err, "xml file load error")
+
+	for n := 0; n < b.N; n++ {
+		var p AddressParser
+		p.Init()
+		err := p.read(NewSizedBufReader(bytes.NewReader(xmlBytes), 4096000))
 		require.NoErrorf(b, err, "xml read error")
 	}
 }
