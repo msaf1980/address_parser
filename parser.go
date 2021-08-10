@@ -8,7 +8,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+const statChannelSize = 1024
 
 type House struct {
 	city   string
@@ -71,8 +74,6 @@ func (stat *Statistic) add(h *House) {
 			}
 		}
 	}
-
-	h.reset()
 }
 
 func (stat *Statistic) Init() {
@@ -126,14 +127,30 @@ const (
 	ItemClose = "/>"
 )
 
+func statProcessor(stat *Statistic, statChan chan House, wgDone *sync.WaitGroup) {
+	defer wgDone.Done()
+	wgDone.Add(1)
+	for {
+		if house, ok := <-statChan; ok {
+			stat.add(&house)
+		} else {
+			break
+		}
+	}
+}
+
 type AddressParser struct {
-	Stat Statistic
+	Stat     Statistic // don't update in parse code, push to statChan for backgroud processing
+	statChan chan House
+	statDone sync.WaitGroup // wait grop for statProcessor exited
 
 	line string
 }
 
 func (p *AddressParser) Init() {
 	p.Stat.Init()
+	p.statChan = make(chan House, statChannelSize)
+	go statProcessor(&p.Stat, p.statChan, &p.statDone)
 }
 
 func (p *AddressParser) resetLine(line string) {
@@ -206,6 +223,7 @@ func (p *AddressParser) Empty() bool {
 }
 
 func (p *AddressParser) read(rd *bufio.Reader) error {
+	var errExit error
 	var house House
 
 	var state State
@@ -215,9 +233,10 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 		if err != nil {
 			if err == io.EOF {
 				break
+			} else {
+				errExit = err
+				break
 			}
-
-			return err
 		}
 		p.resetLine(strings.TrimFunc(line, CutFunc))
 
@@ -245,8 +264,8 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 				}
 			case waitName:
 				if p.IsItemClose() {
-					//fmt.Printf("%+v\n", house)
-					p.Stat.add(&house)
+					p.statChan <- house
+					house.reset()
 					state = waitItem
 					break NEW_LINE
 				}
@@ -345,9 +364,14 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 		}
 	}
 
-	p.Stat.add(&house)
+	if errExit == nil {
+		p.statChan <- house
+	}
 
-	return nil
+	close(p.statChan)
+	p.statDone.Wait()
+
+	return errExit
 }
 
 func (p *AddressParser) readAddressFile(filePath string) error {
