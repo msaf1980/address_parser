@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 )
 
 func main() {
@@ -12,9 +13,12 @@ func main() {
 	var parser AddressParser
 	parser.Init()
 
+	start := time.Now()
 	if err := parser.readAddressFile(*path); err != nil {
 		log.Fatalf("read error: %v", err)
 	} else {
+		duration := time.Now().Sub(start)
 		parser.Stat.Dump()
+		log.Printf("Load complete in %v", duration)
 	}
 }
