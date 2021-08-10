@@ -219,7 +219,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 
 			return err
 		}
-		p.resetLine(strings.Trim(line, "\t\n"))
+		p.resetLine(strings.TrimFunc(line, CutFunc))
 
 	NEW_LINE:
 		for {
