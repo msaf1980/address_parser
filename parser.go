@@ -204,7 +204,11 @@ func (p *AddressParser) Empty() bool {
 	return len(p.line) == 0
 }
 
-func (p *AddressParser) read(rd *bufio.Reader) error {
+type StringReader interface {
+	ReadString(delim byte) (string, error)
+}
+
+func (p *AddressParser) read(rd StringReader) error {
 	var house House
 
 	var state State
@@ -357,6 +361,7 @@ func (p *AddressParser) readAddressFile(filePath string) error {
 	defer f.Close()
 
 	bufRd := bufio.NewReader(f)
+	//bufRd := NewBufferedReader(f, 4096)
 
 	return p.read(bufRd)
 }
