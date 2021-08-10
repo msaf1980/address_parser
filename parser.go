@@ -194,7 +194,8 @@ func (p *AddressParser) ExtractQuotedValue() (string, bool) {
 
 func (p *AddressParser) TrimLeftSpace() bool {
 	if p.line[0] == ' ' || p.line[0] == '\t' {
-		p.line = strings.TrimLeft(p.line, " \t")
+		p.line = TrimLeftAnyByte(p.line, []byte{' ', '\t'})
+		//p.line = strings.TrimLeft(p.line, " \t")
 		return true
 	}
 	return false
