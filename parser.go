@@ -8,10 +8,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 const statChannelSize = 1024
+
+const maxFloor = 5
 
 type House struct {
 	city   string
@@ -26,6 +27,8 @@ func (h *House) reset() {
 	h.house = ""
 	h.floor = 0
 }
+
+var emptyHouse House
 
 type Address struct {
 	city   string
@@ -60,7 +63,8 @@ func (stat *Statistic) add(h *House) {
 			stat.Addresses[address] = 1
 			v, ok := stat.Floors[address.city]
 			if !ok {
-				v = make([]uint, 6)
+				v = make([]uint, maxFloor+1)
+				stat.Floors[address.city] = v
 			}
 
 			if h.floor > 5 {
@@ -68,11 +72,9 @@ func (stat *Statistic) add(h *House) {
 			} else {
 				v[h.floor-1]++
 			}
-
-			if !ok {
-				stat.Floors[address.city] = v
-			}
 		}
+	} else if *h != emptyHouse {
+		stat.Broken++ // incomplete item
 	}
 }
 
@@ -82,6 +84,24 @@ func (stat *Statistic) Init() {
 
 	stat.Addresses = make(AddressMap)
 	stat.Floors = make(FloorMap)
+}
+
+func (stat *Statistic) Merge(s *Statistic) {
+	stat.Items += s.Items
+	stat.Broken += s.Broken
+	for address, count := range s.Addresses {
+		stat.Addresses[address] += count
+	}
+	for city, floors := range s.Floors {
+		v, ok := stat.Floors[city]
+		if !ok {
+			v = make([]uint, maxFloor+1)
+			stat.Floors[city] = v
+		}
+		for i := range floors {
+			v[i] += floors[i]
+		}
+	}
 }
 
 func (stat *Statistic) Dump() {
@@ -127,30 +147,47 @@ const (
 	ItemClose = "/>"
 )
 
-func statProcessor(stat *Statistic, statChan chan House, wgDone *sync.WaitGroup) {
-	defer wgDone.Done()
-	wgDone.Add(1)
+func statProcessor(inChan <-chan House, statChan chan<- Statistic) {
+	var stat Statistic
+	stat.Init()
+LOOP:
 	for {
-		if house, ok := <-statChan; ok {
-			stat.add(&house)
-		} else {
-			break
+		select {
+		case house, ok := <-inChan:
+			if ok {
+				stat.add(&house)
+			} else {
+				break LOOP
+			}
 		}
 	}
+	statChan <- stat
 }
 
 type AddressParser struct {
 	Stat     Statistic // don't update in parse code, push to statChan for backgroud processing
-	statChan chan House
-	statDone sync.WaitGroup // wait grop for statProcessor exited
+	pushChan chan House
+	statChan chan Statistic
+
+	parallel int
 
 	line string
 }
 
-func (p *AddressParser) Init() {
+func (p *AddressParser) Init(parallel int) {
+	if parallel < 1 {
+		p.parallel = 1
+	} else {
+		p.parallel = parallel
+	}
+
 	p.Stat.Init()
-	p.statChan = make(chan House, statChannelSize)
-	go statProcessor(&p.Stat, p.statChan, &p.statDone)
+	p.pushChan = make(chan House, statChannelSize)
+	p.statChan = make(chan Statistic, parallel)
+
+	for i := 0; i < p.parallel; i++ {
+		go statProcessor(p.pushChan, p.statChan)
+	}
 }
 
 func (p *AddressParser) resetLine(line string) {
@@ -212,7 +249,6 @@ func (p *AddressParser) ExtractQuotedValue() (string, bool) {
 func (p *AddressParser) TrimLeftSpace() bool {
 	if p.line[0] == ' ' || p.line[0] == '\t' {
 		p.line = TrimLeftAnyByte(p.line, []byte{' ', '\t'})
-		//p.line = strings.TrimLeft(p.line, " \t")
 		return true
 	}
 	return false
@@ -264,7 +300,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 				}
 			case waitName:
 				if p.IsItemClose() {
-					p.statChan <- house
+					p.pushChan <- house
 					house.reset()
 					state = waitItem
 					break NEW_LINE
@@ -278,7 +314,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 					case "city":
 						if len(house.city) > 0 {
 							p.Stat.Broken++
-							log.Printf("WARN: duplicate city in: %s\n", strings.Trim(line, "\r\n"))
+							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
 							continue
 						}
@@ -364,12 +400,13 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 		}
 	}
 
-	if errExit == nil {
-		p.statChan <- house
-	}
+	p.pushChan <- house
 
-	close(p.statChan)
-	p.statDone.Wait()
+	close(p.pushChan)
+	for i := 0; i < p.parallel; i++ {
+		stat := <-p.statChan
+		p.Stat.Merge(&stat)
+	}
 
 	return errExit
 }

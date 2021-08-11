@@ -7,6 +7,7 @@ import (
 	"path"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func TestAddressParser(t *testing.T) {
-	xml := strings.NewReader(
+	xml :=
 		`<?xml version="1.0" encoding="utf-8"?>
 <root>
 <item city="Барнаул" street="Дальняя улица" house="56" floor="2" />
@@ -32,7 +33,7 @@ func TestAddressParser(t *testing.T) {
 
 <item city="Братск" street="Большая Октябрьская улица" house="66" floor="7" />
 </root>
-`)
+`
 
 	wantStat := Statistic{
 		Items:  6,
@@ -70,45 +71,50 @@ func TestAddressParser(t *testing.T) {
 		},
 	}
 
-	var p AddressParser
-	p.Init()
+	for i := 1; i <= 4; i++ {
+		t.Run("with parallelizm "+strconv.Itoa(i), func(t *testing.T) {
+			xmlReader := strings.NewReader(xml)
+			var p AddressParser
+			p.Init(1)
 
-	err := p.read(bufio.NewReader(xml))
-	require.NoErrorf(t, err, "xml read error")
+			err := p.read(bufio.NewReader(xmlReader))
+			require.NoErrorf(t, err, "xml read error")
 
-	assert.Equalf(t, wantStat.Items, p.Stat.Items, "items")
-	assert.Equalf(t, wantStat.Broken, p.Stat.Broken, "broken")
+			assert.Equalf(t, wantStat.Items, p.Stat.Items, "items")
+			assert.Equalf(t, wantStat.Broken, p.Stat.Broken, "broken")
 
-	for address, count := range wantStat.Addresses {
-		if realCount, ok := p.Stat.Addresses[address]; ok {
-			if realCount != count {
-				t.Errorf(" - Address %+v: %d", address, count)
-				t.Errorf(" + Address %+v: %d", address, realCount)
+			for address, count := range wantStat.Addresses {
+				if realCount, ok := p.Stat.Addresses[address]; ok {
+					if realCount != count {
+						t.Errorf(" - Address %+v: %d", address, count)
+						t.Errorf(" + Address %+v: %d", address, realCount)
+					}
+				} else {
+					t.Errorf(" - Address %+v: %d", address, count)
+				}
 			}
-		} else {
-			t.Errorf(" - Address %+v: %d", address, count)
-		}
-	}
-	for address, realCount := range p.Stat.Addresses {
-		if _, ok := wantStat.Addresses[address]; !ok {
-			t.Errorf(" + Address %+v: %d", address, realCount)
-		}
-	}
-
-	for city, floors := range wantStat.Floors {
-		if realFloors, ok := p.Stat.Floors[city]; ok {
-			if !reflect.DeepEqual(realFloors, floors) {
-				t.Errorf(" - %s Floors %+v", city, floors)
-				t.Errorf(" + %s Floors %+v", city, realFloors)
+			for address, realCount := range p.Stat.Addresses {
+				if _, ok := wantStat.Addresses[address]; !ok {
+					t.Errorf(" + Address %+v: %d", address, realCount)
+				}
 			}
-		} else {
-			t.Errorf(" - %s Floors %+v", city, floors)
-		}
-	}
-	for city, realFloors := range p.Stat.Floors {
-		if _, ok := wantStat.Floors[city]; !ok {
-			t.Errorf(" + %s Floors %+v", city, realFloors)
-		}
+
+			for city, floors := range wantStat.Floors {
+				if realFloors, ok := p.Stat.Floors[city]; ok {
+					if !reflect.DeepEqual(realFloors, floors) {
+						t.Errorf(" - %s Floors %+v", city, floors)
+						t.Errorf(" + %s Floors %+v", city, realFloors)
+					}
+				} else {
+					t.Errorf(" - %s Floors %+v", city, floors)
+				}
+			}
+			for city, realFloors := range p.Stat.Floors {
+				if _, ok := wantStat.Floors[city]; !ok {
+					t.Errorf(" + %s Floors %+v", city, realFloors)
+				}
+			}
+		})
 	}
 }
 
@@ -178,7 +184,7 @@ func BenchmarkAddressParserSmall(b *testing.B) {
 
 	for n := 0; n < b.N; n++ {
 		var p AddressParser
-		p.Init()
+		p.Init(1)
 		err := p.read(bufio.NewReader(xml))
 		require.NoErrorf(b, err, "xml read error")
 	}
@@ -187,13 +193,20 @@ func BenchmarkAddressParserSmall(b *testing.B) {
 func BenchmarkAddressParserLarge(b *testing.B) {
 	_, filename, _, _ := runtime.Caller(0)
 	path := path.Join(path.Dir(filename), "bench", "large.xml")
-	xml, err := ioutil.ReadFile(path)
-	require.NoErrorf(b, err, "xml file load error")
 
-	for n := 0; n < b.N; n++ {
-		var p AddressParser
-		p.Init()
-		err := p.read(bufio.NewReader(bytes.NewReader(xml)))
-		require.NoErrorf(b, err, "xml read error")
+	for i := 1; i <= 4; i++ {
+		b.Run("with parallelizm "+strconv.Itoa(i), func(b *testing.B) {
+			for n := 0; n < b.N; n++ {
+				b.StopTimer()
+				xml, err := ioutil.ReadFile(path)
+				require.NoErrorf(b, err, "xml file load error")
+				b.StartTimer()
+
+				var p AddressParser
+				p.Init(1)
+				err = p.read(bufio.NewReader(bytes.NewReader(xml)))
+				require.NoErrorf(b, err, "xml read error")
+			}
+		})
 	}
 }

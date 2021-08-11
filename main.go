@@ -11,7 +11,7 @@ func main() {
 	flag.Parse()
 
 	var parser AddressParser
-	parser.Init()
+	parser.Init(1)
 
 	start := time.Now()
 	if err := parser.readAddressFile(*path); err != nil {
