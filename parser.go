@@ -8,10 +8,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 )
 
-const statChannelSize = 1024
+const (
+	statChannelSize = 1024
+	maxFloor        = 5
+)
 
 type House struct {
 	city   string
@@ -60,7 +62,7 @@ func (stat *Statistic) add(h *House) {
 			stat.Addresses[address] = 1
 			v, ok := stat.Floors[address.city]
 			if !ok {
-				v = make([]uint, 6)
+				v = make([]uint, maxFloor+1)
 			}
 
 			if h.floor > 5 {
@@ -82,6 +84,24 @@ func (stat *Statistic) Init() {
 
 	stat.Addresses = make(AddressMap)
 	stat.Floors = make(FloorMap)
+}
+
+func (stat *Statistic) Merge(s *Statistic) {
+	stat.Items += s.Items
+	stat.Broken += s.Broken
+	for address, count := range s.Addresses {
+		stat.Addresses[address] += count
+	}
+	for city, floors := range s.Floors {
+		v, ok := stat.Floors[city]
+		if !ok {
+			v = make([]uint, maxFloor+1)
+			stat.Floors[city] = v
+		}
+		for i := range floors {
+			v[i] += floors[i]
+		}
+	}
 }
 
 func (stat *Statistic) Dump() {
@@ -127,30 +147,28 @@ const (
 	ItemClose = "/>"
 )
 
-func statProcessor(stat *Statistic, statChan chan House, wgDone *sync.WaitGroup) {
-	defer wgDone.Done()
-	wgDone.Add(1)
-	for {
-		if house, ok := <-statChan; ok {
-			stat.add(&house)
-		} else {
-			break
-		}
+func statProcessor(pushChan <-chan House, statChan chan<- *Statistic) {
+	stat := &Statistic{}
+	stat.Init()
+	for house := range pushChan {
+		stat.add(&house)
 	}
+	statChan <- stat
 }
 
 type AddressParser struct {
 	Stat     Statistic // don't update in parse code, push to statChan for backgroud processing
-	statChan chan House
-	statDone sync.WaitGroup // wait grop for statProcessor exited
+	pushChan chan House
+	statChan chan *Statistic
+	broken   uint
 
 	line string
 }
 
 func (p *AddressParser) Init() {
-	p.Stat.Init()
-	p.statChan = make(chan House, statChannelSize)
-	go statProcessor(&p.Stat, p.statChan, &p.statDone)
+	p.pushChan = make(chan House, statChannelSize)
+	p.statChan = make(chan *Statistic)
+	go statProcessor(p.pushChan, p.statChan)
 }
 
 func (p *AddressParser) resetLine(line string) {
@@ -262,7 +280,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 				// TODO detect if endline
 				if !p.TrimLeftSpace() {
 					if !p.Empty() {
-						p.Stat.Broken++
+						p.broken++
 						house.reset()
 					}
 					state = waitItem
@@ -270,7 +288,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 				}
 			case waitName:
 				if p.IsItemClose() {
-					p.statChan <- house
+					p.pushChan <- house
 					house.reset()
 					state = waitItem
 					break NEW_LINE
@@ -283,7 +301,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 					switch name {
 					case "city":
 						if len(house.city) > 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: duplicate city in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
@@ -291,14 +309,14 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 						}
 						house.city, found = p.ExtractQuotedValue()
 						if !found || len(house.city) == 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: can't extract city name in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
 						}
 					case "street":
 						if len(house.street) > 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: duplicate street in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
@@ -306,14 +324,14 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 						}
 						house.street, found = p.ExtractQuotedValue()
 						if !found || len(house.street) == 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: can't extract street name in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
 						}
 					case "house":
 						if len(house.house) > 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: duplicate house in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
@@ -321,7 +339,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 						}
 						house.house, found = p.ExtractQuotedValue()
 						if !found || len(house.street) == 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: can't extract house name in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
@@ -329,7 +347,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 					case "floor":
 						var floor string
 						if house.floor > 0 {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: duplicate floor in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
@@ -348,21 +366,21 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 								house.floor = uint(fl)
 							}
 						} else if !found {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: can't extract house floor in: %s\n", strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
 						}
 					default:
 						if _, found = p.ExtractQuotedValue(); !found {
-							p.Stat.Broken++
+							p.broken++
 							log.Printf("WARN: can't extract %s value in: %s\n", name, strings.Trim(line, "\r\n"))
 							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
 						}
 					}
 				} else {
-					p.Stat.Broken++
+					p.broken++
 					log.Printf("WARN: incomplete line: %s\n", strings.Trim(line, "\r\n"))
 					state = waitItem // item is broken and skipped, wait for new item
 					continue
@@ -372,11 +390,14 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 	}
 
 	if errExit == nil {
-		p.statChan <- house
+		p.pushChan <- house
 	}
 
-	close(p.statChan)
-	p.statDone.Wait()
+	close(p.pushChan)
+	stat := <-p.statChan
+	p.Stat = *stat
+	p.Stat.Broken += p.broken // merge broken stat
+	p.broken = 0
 
 	return errExit
 }
