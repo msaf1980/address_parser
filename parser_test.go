@@ -113,7 +113,7 @@ func TestAddressParser(t *testing.T) {
 }
 
 func BenchmarkAddressParserSmall(b *testing.B) {
-	xml := strings.NewReader(
+	xml :=
 		`<?xml version="1.0" encoding="utf-8"?>
 <root>
 <item city="Барнаул" street="Дальняя улица" house="56" floor="2" />
@@ -174,12 +174,13 @@ func BenchmarkAddressParserSmall(b *testing.B) {
 <item city="Белорецк" street="Овражная улица" house="97" floor="3" />
 <item city="Алексин" street="Речная улица" house="185" floor="1" />
 </root>
-`)
+`
 
 	for n := 0; n < b.N; n++ {
 		var p AddressParser
+		xmlReader := strings.NewReader(xml)
 		p.Init()
-		err := p.read(bufio.NewReader(xml))
+		err := p.read(bufio.NewReader(xmlReader))
 		require.NoErrorf(b, err, "xml read error")
 	}
 }
