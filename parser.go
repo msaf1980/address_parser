@@ -279,6 +279,7 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 						if len(house.city) > 0 {
 							p.Stat.Broken++
 							log.Printf("WARN: duplicate city in: %s\n", strings.Trim(line, "\r\n"))
+							house.reset()
 							state = waitItem // item is broken and skipped, wait for new item
 							continue
 						}
