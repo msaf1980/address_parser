@@ -229,10 +229,16 @@ func (p *AddressParser) read(rd *bufio.Reader) error {
 	var state State
 
 	for {
+		if errExit != nil {
+			if errExit == io.EOF {
+				errExit = nil
+			}
+			break
+		}
 		line, err := rd.ReadString('>')
 		if err != nil {
 			if err == io.EOF {
-				break
+				errExit = err
 			} else {
 				errExit = err
 				break
